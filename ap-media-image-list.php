@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: AP Media Image List
- * Description: Shortcode [media_image_table] — displays all media images (one per row) with filename, parent post (linked), categories, and an inline compact category editor (search + tri-state checkboxes). Includes draft/private posts.
- * Version: 1.5.2
+ * Description: Shortcode [media_image_table] — displays all media images (one per row) with filename, parent post (linked), categories, and an optional inline compact category editor (search + tri-state checkboxes). Includes draft/private posts.
+ * Version: 1.5.3
  * Author: AlwaysPhotographing
  * License: MIT
  * Text Domain: ap-media-image-list
@@ -64,7 +64,6 @@ class AP_Media_Image_List {
     // JS (search filter + tri-state parents but never auto-check parent from child)
     $js = "
       (function(){
-        // Filter the tree: show matches and their ancestors.
         function applyFilter(panel, query){
           query = (query || '').toLowerCase();
           var wrap = panel.querySelector('.ap-cat-search-wrap');
@@ -85,14 +84,12 @@ class AP_Media_Image_List {
           li.style.display = visible ? '' : 'none';
           return visible;
         }
-
         function setChildren(li, checked){
-          li.querySelectorAll(':cope ul .ap-cat-check').forEach(function(childCb){
+          li.querySelectorAll(':scope ul .ap-cat-check').forEach(function(childCb){
             childCb.checked = checked;
             childCb.indeterminate = false;
           });
         }
-
         // Do NOT auto-check parent when children change; only show indeterminate.
         function updateParents(li){
           var parentLi = li.parentElement.closest('.ap-cat-li');
@@ -102,19 +99,14 @@ class AP_Media_Image_List {
           var childCbs = parentLi.querySelectorAll(':scope > ul .ap-cat-check');
           var total = 0, checked = 0;
           childCbs.forEach(function(c){ total++; if(c.checked) checked++; });
-          // Only manage indeterminate; do not toggle parent 'checked' state automatically
-          if(checked === 0){
-            parentCb.indeterminate = false;
-          }else if(checked === total){
+          if(checked === 0 || checked === total){
             parentCb.indeterminate = false;
           }else{
             parentCb.indeterminate = true;
           }
           updateParents(parentLi);
         }
-
         function attach(panel){
-          // Search + clear
           var search = panel.querySelector('.ap-cat-search');
           var clearBtn = panel.querySelector('.ap-cat-clear');
           if(search){
@@ -127,34 +119,22 @@ class AP_Media_Image_List {
               search.focus();
             });
           }
-
-          // Checkbox logic
           panel.addEventListener('change', function(e){
             var cb = e.target.closest('.ap-cat-check');
             if(!cb) return;
             var li = cb.closest('.ap-cat-li');
-            // If a parent is toggled, cascade to children
             var isParent = !!li.querySelector(':scope > ul');
             if(isParent && e.target === cb){
-              li.querySelectorAll(':scope ul .ap-cat-check').forEach(function(childCb){
-                childCb.checked = cb.checked;
-                childCb.indeterminate = false;
-              });
+              setChildren(li, cb.checked);
             }
-            // Always recompute parent indeterminate states
             updateParents(li);
           });
-
-          // Add native tooltips to each label with full name (already set in markup)
           panel.querySelectorAll('.ap-cat-label').forEach(function(span){
             if(!span.getAttribute('title')) span.setAttribute('title', span.textContent.trim());
           });
-
-          // Initial compute of parent indeterminates
           panel.querySelectorAll('.ap-cat-li').forEach(function(li){ updateParents(li); });
           applyFilter(panel, '');
         }
-
         document.addEventListener('DOMContentLoaded', function(){
           document.querySelectorAll('.ap-cat-panel').forEach(attach);
         });
@@ -186,7 +166,6 @@ class AP_Media_Image_List {
 
     if (!$uses_category || !current_user_can('edit_post', $post_id) || !current_user_can($assign_cap)) return;
 
-    // Selected categories
     $selected = isset($_POST['ap_mit_cat_id']) ? array_map('intval', (array) $_POST['ap_mit_cat_id']) : [];
     wp_set_post_terms($post_id, $selected, $taxonomy, false);
 
@@ -201,6 +180,7 @@ class AP_Media_Image_List {
       'orderby'            => 'date',
       'order'              => 'DESC',
       'size'               => 'thumbnail',
+      'show_editor'        => 'true', // NEW: show/hide the Edit Categories column
     ], $atts, 'media_image_table');
 
     $per_page = intval($atts['per_page']); if ($per_page === 0) $per_page = 50;
@@ -211,6 +191,7 @@ class AP_Media_Image_List {
     $orderby = sanitize_key($atts['orderby']);
     $order   = strtoupper($atts['order']) === 'ASC' ? 'ASC' : 'DESC';
     $size    = sanitize_text_field($atts['size']);
+    $show_editor = filter_var($atts['show_editor'], FILTER_VALIDATE_BOOLEAN);
 
     $query_args = [
       'post_type'      => 'attachment',
@@ -247,7 +228,6 @@ class AP_Media_Image_List {
           $post_title_esc = esc_html($post_title ?: '(untitled)');
           $post_link_esc  = esc_url($permalink ?: '#');
 
-          // Display selected categories (names)
           $cat_terms = taxonomy_exists('category') ? wp_get_post_terms($parent_id, 'category') : [];
           $tax_cats  = (!empty($cat_terms) && !is_wp_error($cat_terms)) ? wp_list_pluck($cat_terms, 'name') : [];
           $cats_text = !empty($tax_cats) ? esc_html(implode(', ', $tax_cats)) : '';
@@ -257,71 +237,75 @@ class AP_Media_Image_List {
           $right_col .= '</div>';
           $right_col .= '<div class="mit-cats">' . ($cats_text !== '' ? $cats_text : '<span class="mit-unattached">No categories</span>') . '</div>';
 
-          // === Editor column ===
-          $taxonomy    = 'category';
-          $tax_obj     = taxonomy_exists($taxonomy) ? get_taxonomy($taxonomy) : null;
-          $assign_cap  = $tax_obj && !empty($tax_obj->cap->assign_terms) ? $tax_obj->cap->assign_terms : 'edit_posts';
-          $taxonomies  = get_object_taxonomies($parent->post_type);
-          $uses_category = taxonomy_exists($taxonomy) && (in_array($taxonomy, $taxonomies, true) || $parent->post_type === 'post');
+          if ($show_editor) {
+            $taxonomy    = 'category';
+            $tax_obj     = taxonomy_exists($taxonomy) ? get_taxonomy($taxonomy) : null;
+            $assign_cap  = $tax_obj && !empty($tax_obj->cap->assign_terms) ? $tax_obj->cap->assign_terms : 'edit_posts';
+            $taxonomies  = get_object_taxonomies($parent->post_type);
+            $uses_category = taxonomy_exists($taxonomy) && (in_array($taxonomy, $taxonomies, true) || $parent->post_type === 'post');
 
-          if (!is_user_logged_in()) {
-            $edit_col = '<div class="ap-warning">You need to be logged in as an Administrator or Editor to use this feature.</div>';
-          } elseif ($uses_category && current_user_can('edit_post', $parent_id) && current_user_can($assign_cap)) {
-            $all_terms = get_terms(['taxonomy' => $taxonomy, 'hide_empty' => false]);
-            $selected_ids = wp_get_post_terms($parent_id, $taxonomy, ['fields' => 'ids']);
-            $by_parent = [];
-            if (!is_wp_error($all_terms)) {
-              foreach ($all_terms as $t) { $by_parent[$t->parent][] = $t; }
+            if (!is_user_logged_in()) {
+              $edit_col = '<div class="ap-warning">You need to be logged in as an Administrator or Editor to use this feature.</div>';
+            } elseif ($uses_category && current_user_can('edit_post', $parent_id) && current_user_can($assign_cap)) {
+              $all_terms = get_terms(['taxonomy' => $taxonomy, 'hide_empty' => false]);
+              $selected_ids = wp_get_post_terms($parent_id, $taxonomy, ['fields' => 'ids']);
+              $by_parent = [];
+              if (!is_wp_error($all_terms)) {
+                foreach ($all_terms as $t) { $by_parent[$t->parent][] = $t; }
+              }
+
+              $panel_id = 'ap-cat-panel-' . $parent_id;
+              ob_start();
+              echo '<div id="' . esc_attr($panel_id) . '" class="ap-cat-panel">';
+              echo '<form method="post" action="' . esc_url(add_query_arg([], remove_query_arg([]))) . '">';
+
+              echo '<div class="ap-cat-search-wrap">';
+              echo '<input type="search" class="ap-cat-search" placeholder="Search Categories" />';
+              echo '<span class="ap-cat-clear" title="Clear">×</span>';
+              echo '</div>';
+
+              echo '<div class="ap-cat-tree">';
+              echo $this->render_cat_tree_ul(0, $by_parent, $selected_ids, 'ap_mit_cat_id');
+              echo '</div>';
+
+              wp_nonce_field('ap_mit_update_categories_' . $parent_id, 'ap_mit_nonce');
+              echo '<input type="hidden" name="ap_mit_update_cats" value="1" />';
+              echo '<input type="hidden" name="ap_mit_post_id" value="' . esc_attr($parent_id) . '" />';
+
+              echo '<div class="ap-cat-actions"><button type="submit" class="ap-button">Save Categories</button><span class="ap-note">Parents are indeterminate when only some children are selected.</span></div>';
+
+              echo '</form></div>';
+              $edit_col = ob_get_clean();
+            } else {
+              $edit_col = '<div class="mit-unattached">You need to be logged in as an Administrator or Editor to use this feature.</div>';
             }
-
-            $panel_id = 'ap-cat-panel-' . $parent_id;
-            ob_start();
-            echo '<div id="' . esc_attr($panel_id) . '" class="ap-cat-panel">';
-            echo '<form method="post" action="' . esc_url(add_query_arg([], remove_query_arg([]))) . '">';
-
-            // Search + Clear
-            echo '<div class="ap-cat-search-wrap">';
-            echo '<input type="search" class="ap-cat-search" placeholder="Search Categories" />';
-            echo '<span class="ap-cat-clear" title="Clear">×</span>';
-            echo '</div>';
-
-            // Tree
-            echo '<div class="ap-cat-tree">';
-            echo $this->render_cat_tree_ul(0, $by_parent, $selected_ids, 'ap_mit_cat_id');
-            echo '</div>';
-
-            // Nonce & hidden fields
-            wp_nonce_field('ap_mit_update_categories_' . $parent_id, 'ap_mit_nonce');
-            echo '<input type="hidden" name="ap_mit_update_cats" value="1" />';
-            echo '<input type="hidden" name="ap_mit_post_id" value="' . esc_attr($parent_id) . '" />';
-
-            echo '<div class="ap-cat-actions"><button type="submit" class="ap-button">Save Categories</button><span class="ap-note">Parents are indeterminate when only some children are selected.</span></div>';
-
-            echo '</form></div>';
-            $edit_col = ob_get_clean();
-          } else {
-            $edit_col = '<div class="mit-unattached">You need to be logged in as an Administrator or Editor to use this feature.</div>';
           }
 
         } else {
           $right_col = '<div class="mit-unattached">Parent post not found</div>';
-          $edit_col  = '<div class="mit-unattached">—</div>';
+          if ($show_editor) $edit_col  = '<div class="mit-unattached">—</div>';
         }
       } else {
         if (!$include_unattached) continue;
         $right_col = '<div class="mit-unattached">Unattached image</div>';
-        $edit_col  = '<div class="mit-unattached">Attach to a post to edit categories.</div>';
+        if ($show_editor) $edit_col  = '<div class="mit-unattached">Attach to a post to edit categories.</div>';
       }
 
       $rows_html .= '<tr>';
       $rows_html .= '<td style="width:190px;"><div>' . $thumb_html . '</div><div class="mit-filename" title="' . esc_attr($filename) . '">' . esc_html($filename) . '</div></td>';
       $rows_html .= '<td>' . $right_col . '</td>';
-      $rows_html .= '<td style="width:200px;">' . $edit_col . '</td>';
+      if ($show_editor) {
+        $rows_html .= '<td style="width:200px;">' . $edit_col . '</td>';
+      }
       $rows_html .= '</tr>';
     }
 
     $out  = '<table class="media-image-table">';
-    $out .= '<thead><tr><th>Image</th><th>Post & Categories</th><th>Edit Categories</th></tr></thead>';
+    if ($show_editor) {
+      $out .= '<thead><tr><th>Image</th><th>Post & Categories</th><th>Edit Categories</th></tr></thead>';
+    } else {
+      $out .= '<thead><tr><th>Image</th><th>Post & Categories</th></tr></thead>';
+    }
     $out .= '<tbody>' . $rows_html . '</tbody>';
     $out .= '</table>';
 
@@ -333,7 +317,6 @@ class AP_Media_Image_List {
     return $out;
   }
 
-  /** Render hierarchical UL with checkboxes */
   private function render_cat_tree_ul($parent_id, $by_parent, $selected_ids, $name_attr) {
     if (empty($by_parent[$parent_id])) return '';
     $html = '<ul>';

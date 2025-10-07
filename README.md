@@ -8,7 +8,7 @@ A lightweight WordPress plugin that lists **all image attachments** in a table�
 
 It works with **draft/private** posts and includes capability checks so only authorized users can modify categories.
 
-> **Shortcode:** `[media_image_table]`
+> **Shortcode:** `[media_image_list]`
 
 ---
 
@@ -45,7 +45,7 @@ It works with **draft/private** posts and includes capability checks so only aut
 3. Create a **draft** page (recommended) and add the shortcode:
 
 ```text
-[media_image_table]
+[media_image_list]
 ```
 
 Open the page (or preview) to use the tool.
@@ -64,12 +64,15 @@ Open the page (or preview) to use the tool.
 | `orderby` | string | `date` | Any valid `WP_Query` orderby for attachments. |
 | `order` | `ASC` \| `DESC` | `DESC` | Sort direction. |
 | `size` | string | `thumbnail` | Any registered image size. |
+| `size` | string | `thumbnail` | Any registered image size. |
+| `show_editor` | bool | `true` | Display categoty edit tool. |
 
 **Examples**
 
 ```text
-[media_image_table per_page="100" orderby="title" order="ASC" size="medium"]
-[media_image_table include_unattached="false"]
+[media_image_list per_page="100" orderby="title" order="ASC" size="medium"]
+[media_image_list include_unattached="false"]
+[media_image_list show_editor="false"]
 ```
 
 ---
@@ -151,7 +154,7 @@ Small CSS hooks you might override in your theme or a Customizer snippet:
 - Single-file plugin: `ap-media-image-list.php`
 - Main class: `AP_Media_Image_List`
 - Hooks used:
-  - `add_shortcode( 'media_image_table', ... )`
+  - `add_shortcode( 'media_image_list', ... )`
   - `wp_enqueue_scripts` for inline CSS/JS
   - `init` for processing the save action
 - Text domain: `ap-media-image-list`
@@ -160,7 +163,7 @@ Small CSS hooks you might override in your theme or a Customizer snippet:
 
 1. Drop the file into `wp-content/plugins/ap-media-image-list/`
 2. Activate the plugin
-3. Create/preview a page with `[media_image_table]`
+3. Create/preview a page with `[media_image_list]`
 
 ### Coding Style
 
@@ -188,6 +191,7 @@ Small CSS hooks you might override in your theme or a Customizer snippet:
 
 ## 📝 Changelog
 
+- **1.5.3** - Added show_editor when fause will remove the category edit column for inventory printing
 - **1.5.2** — No-wrap labels with ellipsis; hover tooltips; stable width while filtering; minor style polish.
 - **1.5.1** — Fixed filename rendering; widened editor column.
 - **1.5.0** — Renamed to *AP Media Image List*; no root indent; child click no longer auto-checks parent.
