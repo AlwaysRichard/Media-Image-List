@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AP Media Image List
  * Description: Shortcode [media_image_table] — displays all media images (one per row) with filename, parent post (linked), categories, and an optional inline compact category editor (search + tri-state checkboxes). Includes draft/private posts.
- * Version: 1.5.4
+ * Version: 1.6.0
  * Author: AlwaysPhotographing
  * License: MIT
  * Text Domain: ap-media-image-list
@@ -91,6 +91,29 @@ class AP_Media_Image_List {
 
       .ap-note { font-size:var(--wp--preset--font-size--small, 12px); color:#6b7280; display:inline-block; min-width:80px; margin-left:8px; }
       .ap-warning { color:#6b7280; font-style:italic; font-size:var(--wp--preset--font-size--small, 12px); }
+      
+      /* Inline category editor styles */
+      .mit-edit-categories-btn { 
+        margin-top: 8px; 
+        padding: 2px 6px; 
+        border: 1px solid #d1d5db; 
+        border-radius: 3px; 
+        background: #f9fafb; 
+        cursor: pointer; 
+        font-size: var(--wp--preset--font-size--small, 12px); 
+        color: #374151;
+        display: inline-block;
+      }
+      .mit-edit-categories-btn:hover { background: #f3f4f6; }
+      .mit-inline-editor { 
+        display: none; 
+        margin-top: 8px; 
+        padding: 8px; 
+        border: 1px solid #e5e7eb; 
+        border-radius: 6px; 
+        background: #f9fafb; 
+      }
+      .mit-inline-editor.visible { display: block; }
     ";
     wp_register_style('ap-media-image-list-inline', false);
     wp_enqueue_style('ap-media-image-list-inline');
@@ -139,6 +162,8 @@ class AP_Media_Image_List {
                 .then(function(data){
                   note.textContent = data.success ? "Saved!" : (data.data && data.data.message ? data.data.message : "Error");
                   if (data.success) {
+                    // Update the categories display in the second column
+                    updateCategoriesDisplay(form);
                     setTimeout(function(){ note.textContent = ''; }, 2000);
                   }
                 })
@@ -147,6 +172,32 @@ class AP_Media_Image_List {
             });
           });
         });
+        
+        // Function to update categories display in the second column
+        function updateCategoriesDisplay(form) {
+          // Get all checked categories from the form
+          var checkedBoxes = form.querySelectorAll('input[name="ap_mit_cat_id[]"]:checked');
+          var categoryNames = [];
+          checkedBoxes.forEach(function(box) {
+            var name = box.getAttribute('data-name');
+            if (name) categoryNames.push(name);
+          });
+          
+          // Find the corresponding categories display in the second column
+          // The form is in the third column, we need to find the second column in the same row
+          var currentRow = form.closest('tr');
+          if (currentRow) {
+            var categoriesDiv = currentRow.querySelector('td:nth-child(2) .mit-cats');
+            if (categoriesDiv) {
+              if (categoryNames.length > 0) {
+                categoriesDiv.innerHTML = categoryNames.join(', ');
+              } else {
+                categoriesDiv.innerHTML = '<span class="mit-unattached">No categories</span>';
+              }
+            }
+          }
+        }
+        
         // Category panel logic (unchanged)
         function applyFilter(panel, query){
           query = (query || '').toLowerCase();
@@ -221,6 +272,35 @@ class AP_Media_Image_List {
         }
         document.addEventListener('DOMContentLoaded', function(){
           document.querySelectorAll('.ap-cat-panel').forEach(attach);
+          
+          // Handle Edit Categories button clicks
+          document.querySelectorAll('.mit-edit-categories-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+              e.preventDefault();
+              var editor = btn.nextElementSibling;
+              if (editor && editor.classList.contains('mit-inline-editor')) {
+                var isVisible = editor.classList.contains('visible');
+                
+                // Hide all other editors first
+                document.querySelectorAll('.mit-inline-editor.visible').forEach(function(otherEditor) {
+                  if (otherEditor !== editor) {
+                    otherEditor.classList.remove('visible');
+                    var otherBtn = otherEditor.previousElementSibling;
+                    if (otherBtn) otherBtn.textContent = 'Edit Categories';
+                  }
+                });
+                
+                // Toggle current editor
+                if (isVisible) {
+                  editor.classList.remove('visible');
+                  btn.textContent = 'Edit Categories';
+                } else {
+                  editor.classList.add('visible');
+                  btn.textContent = 'Hide Editor';
+                }
+              }
+            });
+          });
         });
       })();
 JS;
@@ -417,7 +497,7 @@ JS;
             $uses_category = taxonomy_exists($taxonomy) && (in_array($taxonomy, $taxonomies, true) || $parent->post_type === 'post');
 
             if (!is_user_logged_in()) {
-              $edit_col = '<div class="ap-warning">You need to be logged in as an Administrator or Editor to use this feature.</div>';
+              $right_col .= '<div class="ap-warning" style="margin-top:8px;">You need to be logged in as an Administrator or Editor to use this feature.</div>';
             } elseif ($uses_category && current_user_can('edit_post', $parent_id) && current_user_can($assign_cap)) {
               $all_terms = get_terms(['taxonomy' => $taxonomy, 'hide_empty' => false]);
               $selected_ids = wp_get_post_terms($parent_id, $taxonomy, ['fields' => 'ids']);
@@ -427,7 +507,10 @@ JS;
               }
 
               $panel_id = 'ap-cat-panel-' . $parent_id;
+              $right_col .= '<button class="mit-edit-categories-btn">Edit Categories</button>';
+              
               ob_start();
+              echo '<div class="mit-inline-editor">';
               echo '<div id="' . esc_attr($panel_id) . '" class="ap-cat-panel">';
               echo '<form method="post">';
 
@@ -447,20 +530,25 @@ JS;
               echo '<div class="ap-cat-actions"><button type="submit" class="ap-button">Save Categories</button><span class="ap-note"></span></div>';
 
               echo '</form></div>';
-              $edit_col = ob_get_clean();
+              echo '</div>';
+              $right_col .= ob_get_clean();
             } else {
-              $edit_col = '<div class="mit-unattached">You need to be logged in as an Administrator or Editor to use this feature.</div>';
+              $right_col .= '<div class="ap-warning" style="margin-top:8px;">You need to be logged in as an Administrator or Editor to use this feature.</div>';
             }
           }
 
         } else {
           $right_col = '<div class="mit-unattached">Parent post not found</div>';
-          if ($show_editor) $edit_col = '<div class="mit-unattached">—</div>';
+          if ($show_editor) {
+            $right_col .= '<div class="ap-warning" style="margin-top:8px;">—</div>';
+          }
         }
       } else {
         if (!$include_unattached) continue;
         $right_col = '<div class="mit-unattached">Unattached image</div>';
-        if ($show_editor) $edit_col = '<div class="mit-unattached">Attach to a post to edit categories.</div>';
+        if ($show_editor) {
+          $right_col .= '<div class="ap-warning" style="margin-top:8px;">Attach to a post to edit categories.</div>';
+        }
       }
 
       $rows_html .= '<tr>';
@@ -470,18 +558,11 @@ JS;
       $rows_html .= '<td style="vertical-align:top; position:relative;">'
         . $right_col
         . '</td>';
-      if ($show_editor) {
-        $rows_html .= '<td style="width:290px; vertical-align:top;">' . $edit_col . '</td>';
-      }
       $rows_html .= '</tr>';
     }
 
     $out  = '<table class="media-image-table">';
-    if ($show_editor) {
-      $out .= '<thead><tr><th>Image</th><th>Post & Categories</th><th>Edit Categories</th></tr></thead>';
-    } else {
-      $out .= '<thead><tr><th>Image</th><th>Post & Categories</th></tr></thead>';
-    }
+    $out .= '<thead><tr><th>Image</th><th>Post & Categories</th></tr></thead>';
     $out .= '<tbody>' . $rows_html . '</tbody>';
     $out .= '</table>';
 

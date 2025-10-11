@@ -3,8 +3,7 @@
 A lightweight WordPress plugin that lists **all image attachments** in a table—one image per row—with:
 
 - **Thumbnail with EXIF popup** (camera, lens, exposure, GPS, date) extracted from original uploaded files (column 1)
-- **Parent post title** (linked) + the post's categories (column 2)
-- An inline, compact **category editor** with AJAX save, search, tri-state checkboxes, tooltips, and no layout shift (column 3)
+- **Parent post title** (linked) + the post's categories with inline **category editor** accessible via "Edit Categories" button (column 2)
 
 It works with **draft/private** posts and includes capability checks so only authorized users can modify categories.
 
@@ -21,7 +20,9 @@ It works with **draft/private** posts and includes capability checks so only aut
   - Toggle between human-readable format or raw JSON via shortcode attribute
   - Popup can be "pinned" by clicking the thumbnail (click elsewhere to close)
 - Shows **draft**/**private** parent posts too
-- **AJAX-powered category editor** with no page reload:
+- **Inline AJAX-powered category editor** with no page reload:
+  - Compact 2-column layout with expandable editor via "Edit Categories" button
+  - Categories display updates automatically after saving
   - Save categories without losing your place in the list
   - Real-time feedback ("Saving...", "Saved!")
   - Search box + clear "×"
@@ -146,8 +147,12 @@ If you're logged in but still see a warning, ensure your account has the correct
 Small CSS hooks you might override in your theme or a Customizer snippet:
 
 ```css
-/* Make the third column wider */
-.media-image-table td:nth-child(3) { width: 320px; }
+/* Customize the Edit Categories button */
+.mit-edit-categories-btn { 
+  background: #0073aa; 
+  color: white; 
+  border-radius: 4px; 
+}
 
 /* Tweak editor max-height */
 .ap-cat-tree { max-height: 260px; }
@@ -226,6 +231,14 @@ Small CSS hooks you might override in your theme or a Customizer snippet:
 ---
 
 ## Changelog
+
+### 1.6.0
+- **Major UI improvement:** Compact 2-column layout with inline category editor
+- Removed third column - category editor now appears inline within the second column
+- Added "Edit Categories" button that shows/hides the editor on demand
+- Category display updates automatically after saving changes
+- Only one editor can be open at a time for cleaner interface
+- Improved mobile responsiveness with reduced table width
 
 ### 1.5.4
 - AJAX category save (no page reload)
