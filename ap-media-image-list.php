@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AP Media Image List
  * Description: Shortcode [media_image_table] — displays all media images (one per row) with filename, parent post (linked), categories, and an optional inline compact category editor (search + tri-state checkboxes). Includes draft/private posts.
- * Version: 1.5.3
+ * Version: 1.5.4
  * Author: AlwaysPhotographing
  * License: MIT
  * Text Domain: ap-media-image-list
@@ -10,11 +10,40 @@
 
 if (!defined('ABSPATH')) exit;
 
+// Helper to convert EXIF GPS array to DMS string (define only once)
+if (!function_exists('ap_mit_exif_gps_to_dms')) {
+  function ap_mit_exif_gps_to_dms($coord) {
+      try {
+        if (!is_array($coord) || count($coord) < 3) return '';
+    $d = $coord[0]; $m = $coord[1]; $s = $coord[2];
+    foreach (['d','m','s'] as $i => $k) {
+      if (is_string($$k) && strpos($$k, '/') !== false) {
+        list($num, $den) = explode('/', $$k, 2);
+        if (is_numeric($num) && is_numeric($den) && $den != 0) {
+          $$k = $num / $den;
+        } else {
+          $$k = 0;
+        }
+      } elseif (!is_numeric($$k)) {
+        $$k = 0;
+      }
+    }
+    // Avoid divide by zero or malformed data
+    if (!is_numeric($d) || !is_numeric($m) || !is_numeric($s)) return '';
+    return sprintf('%d° %d′ %d″', round($d), round($m), round($s));
+      } catch (\Throwable $e) {
+        error_log('ap_mit_exif_gps_to_dms error: ' . $e->getMessage());
+        return '';
+      }
+  }
+}
+
 class AP_Media_Image_List {
   public function __construct() {
     add_shortcode('media_image_table', [$this, 'render_shortcode']);
     add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
-    add_action('init', [$this, 'handle_category_update']); // save categories
+    add_action('wp_ajax_ap_mit_save_categories', [$this, 'ajax_save_categories']);
+    add_action('wp_ajax_nopriv_ap_mit_save_categories', [$this, 'ajax_save_categories']);
   }
 
   public function enqueue_assets() {
@@ -25,6 +54,12 @@ class AP_Media_Image_List {
       table.media-image-table th { text-align:left; font-weight:600; }
       .mit-thumb { max-width:140px; }
       .mit-filename { font-size:var(--wp--preset--font-size--small, 12px); color:#6b7280; margin-top:4px; word-break:break-all; }
+      .mit-exif-popup-wrap { position:relative; display:inline-block; }
+      .mit-exif-block { display:none; position:absolute; left:100%; top:0; z-index:10; min-width:420px; max-width:none; background:rgba(255,255,255,0.98); border:1px solid #e5e7eb; box-shadow:0 2px 8px #0001; font-family:monospace,monospace; font-size:13px; line-height:1.4; color:#444; padding:10px 14px; border-radius:6px; margin-left:10px; white-space:nowrap; }
+      .mit-exif-popup-wrap:hover .mit-exif-block, .mit-exif-popup-wrap:focus-within .mit-exif-block, .mit-exif-popup-wrap.mit-exif-pinned .mit-exif-block { display:block; }
+      .mit-exif-popup-wrap.mit-exif-pinned { z-index:100; }
+      .mit-exif-block { cursor:text; user-select:text; }
+      .mit-exif-popup-wrap .mit-thumb { cursor:pointer; }
       .mit-post-title { font-weight:600; margin-bottom:4px; font-size:calc(var(--wp--preset--font-size--small, 12px) + 1px); line-height:1.2; }
       .mit-cats { font-size:var(--wp--preset--font-size--small, 12px); color:#374151; line-height:1.2; }
       .mit-unattached { color:#9ca3af; font-style:italic; font-size:var(--wp--preset--font-size--small, 12px); }
@@ -54,16 +89,65 @@ class AP_Media_Image_List {
       .ap-button { padding:4px 7px; border:1px solid #d1d5db; border-radius:3px; background:#f9fafb; cursor:pointer; font-size:var(--wp--preset--font-size--small, 12px); }
       .ap-button:hover { background:#f3f4f6; }
 
-      .ap-note { font-size:var(--wp--preset--font-size--small, 12px); color:#6b7280; }
+      .ap-note { font-size:var(--wp--preset--font-size--small, 12px); color:#6b7280; display:inline-block; min-width:80px; margin-left:8px; }
       .ap-warning { color:#6b7280; font-style:italic; font-size:var(--wp--preset--font-size--small, 12px); }
     ";
     wp_register_style('ap-media-image-list-inline', false);
     wp_enqueue_style('ap-media-image-list-inline');
     wp_add_inline_style('ap-media-image-list-inline', $css);
 
-    // JS (search filter + tri-state parents but never auto-check parent from child)
-    $js = "
+    // JS (category panel + EXIF popup pinning + AJAX save)
+    $ajax_url = admin_url('admin-ajax.php');
+  $js = <<<JS
       (function(){
+        // EXIF popup pinning logic
+        document.addEventListener('DOMContentLoaded', function(){
+          document.querySelectorAll('.mit-exif-popup-wrap').forEach(function(wrap){
+            var img = wrap.querySelector('.mit-thumb');
+            if (!img) return;
+            img.addEventListener('click', function(e){
+              e.preventDefault();
+              e.stopPropagation();
+              var pinned = wrap.classList.toggle('mit-exif-pinned');
+              if (pinned) {
+                // Unpin all others
+                document.querySelectorAll('.mit-exif-popup-wrap.mit-exif-pinned').forEach(function(other){
+                  if (other !== wrap) other.classList.remove('mit-exif-pinned');
+                });
+              }
+            });
+          });
+          // Clicking anywhere else closes all pinned popups
+          document.addEventListener('click', function(e){
+            document.querySelectorAll('.mit-exif-popup-wrap.mit-exif-pinned').forEach(function(wrap){
+              if (!wrap.contains(e.target)) wrap.classList.remove('mit-exif-pinned');
+            });
+          });
+          // AJAX save for category editor
+          document.querySelectorAll('.ap-cat-panel form').forEach(function(form){
+            form.addEventListener('submit', function(ev){
+              ev.preventDefault();
+              var fd = new FormData(form);
+              fd.append('action', 'ap_mit_save_categories');
+              var btn = form.querySelector('button[type="submit"]');
+              var note = form.querySelector('.ap-note');
+              if (!note) return;
+              note.textContent = 'Saving...';
+              btn.disabled = true;
+              fetch("{$ajax_url}", { method: "POST", body: fd, credentials: "same-origin" })
+                .then(function(r){ return r.json(); })
+                .then(function(data){
+                  note.textContent = data.success ? "Saved!" : (data.data && data.data.message ? data.data.message : "Error");
+                  if (data.success) {
+                    setTimeout(function(){ note.textContent = ''; }, 2000);
+                  }
+                })
+                .catch(function(){ note.textContent = "Error"; })
+                .finally(function(){ btn.disabled = false; });
+            });
+          });
+        });
+        // Category panel logic (unchanged)
         function applyFilter(panel, query){
           query = (query || '').toLowerCase();
           var wrap = panel.querySelector('.ap-cat-search-wrap');
@@ -139,37 +223,36 @@ class AP_Media_Image_List {
           document.querySelectorAll('.ap-cat-panel').forEach(attach);
         });
       })();
-    ";
+JS;
     wp_register_script('ap-media-image-list-inline', false);
     wp_enqueue_script('ap-media-image-list-inline');
     wp_add_inline_script('ap-media-image-list-inline', $js);
   }
 
-  // Handle save (categories only).
-  public function handle_category_update() {
-    if (empty($_POST['ap_mit_update_cats']) || empty($_POST['ap_mit_post_id']) || empty($_POST['ap_mit_nonce'])) return;
-
+  // AJAX handler for category save
+  public function ajax_save_categories() {
+  // Debug: log when handler is called
+  error_log('AP_Media_Image_List: ajax_save_categories called');
+  // Set content type header for JSON
+  header('Content-Type: application/json; charset=utf-8');
+    // Check nonce and permissions
+    if (empty($_POST['ap_mit_update_cats']) || empty($_POST['ap_mit_post_id']) || empty($_POST['ap_mit_nonce'])) {
+      wp_send_json_error(['message' => 'Missing data.']);
+    }
     $post_id = intval($_POST['ap_mit_post_id']);
-    if ($post_id <= 0) return;
-
-    if (!wp_verify_nonce($_POST['ap_mit_nonce'], 'ap_mit_update_categories_' . $post_id)) return;
-
+    if ($post_id <= 0) wp_send_json_error(['message' => 'Invalid post.']);
+    if (!wp_verify_nonce($_POST['ap_mit_nonce'], 'ap_mit_update_categories_' . $post_id)) wp_send_json_error(['message' => 'Invalid nonce.']);
     $post = get_post($post_id);
-    if (!$post) return;
-
+    if (!$post) wp_send_json_error(['message' => 'Post not found.']);
     $taxonomy   = 'category';
     $tax_obj    = taxonomy_exists($taxonomy) ? get_taxonomy($taxonomy) : null;
     $assign_cap = $tax_obj && !empty($tax_obj->cap->assign_terms) ? $tax_obj->cap->assign_terms : 'edit_posts';
-
     $taxonomies    = get_object_taxonomies($post->post_type);
     $uses_category = taxonomy_exists($taxonomy) && (in_array($taxonomy, $taxonomies, true) || $post->post_type === 'post');
-
-    if (!$uses_category || !current_user_can('edit_post', $post_id) || !current_user_can($assign_cap)) return;
-
+    if (!$uses_category || !current_user_can('edit_post', $post_id) || !current_user_can($assign_cap)) wp_send_json_error(['message' => 'Permission denied.']);
     $selected = isset($_POST['ap_mit_cat_id']) ? array_map('intval', (array) $_POST['ap_mit_cat_id']) : [];
     wp_set_post_terms($post_id, $selected, $taxonomy, false);
-
-    if (wp_get_referer()) { wp_safe_redirect(wp_get_referer()); exit; }
+    wp_send_json_success(['message' => 'Saved.']);
   }
 
   public function render_shortcode($atts) {
@@ -180,7 +263,8 @@ class AP_Media_Image_List {
       'orderby'            => 'date',
       'order'              => 'DESC',
       'size'               => 'thumbnail',
-      'show_editor'        => 'true', // NEW: show/hide the Edit Categories column
+      'show_editor'        => 'true',
+      'metadata_display'   => 'basic', // basic|json
     ], $atts, 'media_image_table');
 
     $per_page = intval($atts['per_page']); if ($per_page === 0) $per_page = 50;
@@ -209,14 +293,102 @@ class AP_Media_Image_List {
 
     $rows_html = '';
     foreach ($attachments_q->posts as $attachment_id) {
+      try {
+  $parent_id = (int) get_post_field('post_parent', $attachment_id);
+      } catch (\Throwable $e) {
+        $rows_html .= '<tr><td colspan="3" style="color:red;font-size:13px;">EXIF ERROR: ' . esc_html($e->getMessage()) . '</td></tr>';
+        continue;
+      }
+      // ...no debug output...
+  // Reset right_col for each row
+  $right_col = '';
       $thumb_html = wp_get_attachment_image($attachment_id, $size, false, ['class' => 'mit-thumb']);
       if (!$thumb_html) continue;
 
-      $file_path = get_attached_file($attachment_id);
-      $filename  = $file_path ? wp_basename($file_path) : wp_basename(get_post_field('guid', $attachment_id));
+      // Get original file path (not a resized version)
+      $upload_dir = wp_get_upload_dir();
+      $relative_path = get_post_meta($attachment_id, '_wp_attached_file', true);
+      $original_file_path = $relative_path ? trailingslashit($upload_dir['basedir']) . $relative_path : '';
+      $filename  = $original_file_path ? wp_basename($original_file_path) : wp_basename(get_post_field('guid', $attachment_id));
 
-      $parent_id = (int) get_post_field('post_parent', $attachment_id);
-      $right_col = '';
+      // EXIF extraction from original file
+      $exif = [];
+      if ($original_file_path && file_exists($original_file_path)) {
+        if (function_exists('wp_read_image_metadata')) {
+          $meta = wp_read_image_metadata($original_file_path);
+          if ($meta && is_array($meta)) {
+            $exif = $meta;
+          }
+        } elseif (function_exists('exif_read_data')) {
+          $exif = @exif_read_data($original_file_path, 0, true);
+        }
+      }
+
+      // Format EXIF info (reset for each row)
+      $exif_lines = array();
+      // Camera
+      $make  = $exif['IFD0']['Make'] ?? $exif['EXIF']['Make'] ?? $exif['Make'] ?? '';
+      $model = $exif['IFD0']['Model'] ?? $exif['EXIF']['Model'] ?? $exif['Model'] ?? '';
+      if ($make || $model) {
+        $exif_lines[] = 'Camera: ' . esc_html(trim($make . ' ' . $model));
+      }
+      // Lens
+      $lens_make  = $exif['EXIF']['LensMake'] ?? $exif['IFD0']['LensMake'] ?? $exif['LensMake'] ?? '';
+      $lens_model = $exif['EXIF']['LensModel'] ?? $exif['IFD0']['LensModel'] ?? $exif['UndefinedTag:0xA434'] ?? $exif['LensModel'] ?? '';
+      if ($lens_make || $lens_model) {
+        $exif_lines[] = 'Lens: ' . esc_html(trim($lens_make . ' ' . $lens_model));
+      }
+      // Exposure
+      $focal = $exif['EXIF']['FocalLength'] ?? $exif['EXIF']['FocalLengthIn35mmFilm'] ?? $exif['FocalLength'] ?? '';
+      // If focal is in fraction format (e.g., 3000/10), calculate value
+      if (is_string($focal) && strpos($focal, '/') !== false) {
+        list($num, $den) = explode('/', $focal, 2);
+        if (is_numeric($num) && is_numeric($den) && $den != 0) {
+          $focal = round($num / $den);
+        }
+      }
+      $fnum = $exif['EXIF']['FNumber'] ?? $exif['FNumber'] ?? '';
+      $exposure_time = $exif['EXIF']['ExposureTime'] ?? $exif['ExposureTime'] ?? '';
+      $iso = $exif['EXIF']['ISOSpeedRatings'] ?? $exif['ISOSpeedRatings'] ?? ($exif['EXIF']['PhotographicSensitivity'] ?? $exif['PhotographicSensitivity'] ?? '');
+      $exposure = [];
+      if ($focal) $exposure[] = (is_array($focal) ? implode(' ', $focal) : $focal) . 'mm';
+      if ($fnum) $exposure[] = 'f/' . (is_array($fnum) ? reset($fnum) : $fnum);
+      if ($exposure_time) $exposure[] = (is_array($exposure_time) ? reset($exposure_time) : $exposure_time) . 's';
+      if ($iso) $exposure[] = 'ISO ' . (is_array($iso) ? reset($iso) : $iso);
+      if ($exposure) $exif_lines[] = 'Exposure: ' . esc_html(implode(' ', $exposure));
+      // Date
+      $date = $exif['EXIF']['DateTimeOriginal'] ?? $exif['IFD0']['DateTime'] ?? $exif['DateTimeOriginal'] ?? '';
+      if ($date) {
+        $exif_lines[] = 'Date: ' . esc_html($date);
+      }
+      // Location (GPS) (not present in your sample, but keep logic)
+      $gps_lat = '';
+      $gps_lon = '';
+      $gps_dir = '';
+      if (!empty($exif['GPS']['GPSLatitude']) && !empty($exif['GPS']['GPSLatitudeRef'])) {
+        $gps_lat = $exif['GPS']['GPSLatitudeRef'] . ' ' . ap_mit_exif_gps_to_dms($exif['GPS']['GPSLatitude']);
+      }
+      if (!empty($exif['GPS']['GPSLongitude']) && !empty($exif['GPS']['GPSLongitudeRef'])) {
+        $gps_lon = $exif['GPS']['GPSLongitudeRef'] . ' ' . ap_mit_exif_gps_to_dms($exif['GPS']['GPSLongitude']);
+      }
+      if (!empty($exif['GPS']['GPSImgDirection'])) {
+        $gps_dir = $exif['GPS']['GPSImgDirection'] . (isset($exif['GPS']['GPSImgDirectionRef']) ? ' ' . $exif['GPS']['GPSImgDirectionRef'] : '');
+      }
+      $gps_parts = array_filter([$gps_lat, $gps_lon, $gps_dir]);
+      if ($gps_parts) {
+        $exif_lines[] = 'Location: ' . esc_html(implode(' ', $gps_parts));
+      }
+      // File (always add once, at the end, and never duplicate)
+      $exif_lines = array_values(array_filter($exif_lines, function($line) use ($filename) {
+        return trim($line) !== ('File: ' . $filename);
+      }));
+      $exif_lines[] = 'File: ' . esc_html($filename);
+      if ($atts['metadata_display'] === 'json') {
+        $exif_block = '<div class="mit-exif-block" style="white-space:pre-wrap;word-break:break-all;">' . esc_html(json_encode($exif)) . '</div>';
+      } else {
+        $exif_block = '<div class="mit-exif-block">' . implode('<br>', $exif_lines) . '</div>';
+      }
+
       $edit_col  = '';
 
       if ($parent_id > 0) {
@@ -257,7 +429,7 @@ class AP_Media_Image_List {
               $panel_id = 'ap-cat-panel-' . $parent_id;
               ob_start();
               echo '<div id="' . esc_attr($panel_id) . '" class="ap-cat-panel">';
-              echo '<form method="post" action="' . esc_url(add_query_arg([], remove_query_arg([]))) . '">';
+              echo '<form method="post">';
 
               echo '<div class="ap-cat-search-wrap">';
               echo '<input type="search" class="ap-cat-search" placeholder="Search Categories" />';
@@ -272,7 +444,7 @@ class AP_Media_Image_List {
               echo '<input type="hidden" name="ap_mit_update_cats" value="1" />';
               echo '<input type="hidden" name="ap_mit_post_id" value="' . esc_attr($parent_id) . '" />';
 
-              echo '<div class="ap-cat-actions"><button type="submit" class="ap-button">Save Categories</button><span class="ap-note">Parents are indeterminate when only some children are selected.</span></div>';
+              echo '<div class="ap-cat-actions"><button type="submit" class="ap-button">Save Categories</button><span class="ap-note"></span></div>';
 
               echo '</form></div>';
               $edit_col = ob_get_clean();
@@ -283,19 +455,23 @@ class AP_Media_Image_List {
 
         } else {
           $right_col = '<div class="mit-unattached">Parent post not found</div>';
-          if ($show_editor) $edit_col  = '<div class="mit-unattached">—</div>';
+          if ($show_editor) $edit_col = '<div class="mit-unattached">—</div>';
         }
       } else {
         if (!$include_unattached) continue;
         $right_col = '<div class="mit-unattached">Unattached image</div>';
-        if ($show_editor) $edit_col  = '<div class="mit-unattached">Attach to a post to edit categories.</div>';
+        if ($show_editor) $edit_col = '<div class="mit-unattached">Attach to a post to edit categories.</div>';
       }
 
       $rows_html .= '<tr>';
-      $rows_html .= '<td style="width:190px;"><div>' . $thumb_html . '</div><div class="mit-filename" title="' . esc_attr($filename) . '">' . esc_html($filename) . '</div></td>';
-      $rows_html .= '<td>' . $right_col . '</td>';
+      $rows_html .= '<td style="width:190px; vertical-align:top;">'
+        . '<div class="mit-exif-popup-wrap">' . $thumb_html . $exif_block . '</div>'
+        . '</td>';
+      $rows_html .= '<td style="vertical-align:top; position:relative;">'
+        . $right_col
+        . '</td>';
       if ($show_editor) {
-        $rows_html .= '<td style="width:200px;">' . $edit_col . '</td>';
+        $rows_html .= '<td style="width:290px; vertical-align:top;">' . $edit_col . '</td>';
       }
       $rows_html .= '</tr>';
     }
