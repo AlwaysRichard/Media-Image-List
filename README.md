@@ -133,13 +133,11 @@ If you're logged in but still see a warning, ensure your account has the correct
 
 ## Screenshots
 
-> Add screenshots to `assets/` and reference them here.
-
 ### Media list table with EXIF popups
-![Media table](assets/screenshot-1.png)
+![Media table](assets/Screenshot-1.png)
 
 ### Category editor with AJAX save
-![Category editor](assets/screenshot-2.png)
+![Category editor](assets/Screenshot-2.png)
 
 ---
 
