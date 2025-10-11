@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AP Media Image List
  * Description: Shortcode [media_image_table] — displays all media images (one per row) with filename, parent post (linked), categories, and an optional inline compact category editor (search + tri-state checkboxes). Includes draft/private posts.
- * Version: 1.6.0
+ * Version: 1.6.1
  * Author: AlwaysPhotographing
  * License: MIT
  * Text Domain: ap-media-image-list
@@ -52,7 +52,25 @@ class AP_Media_Image_List {
       table.media-image-table { width:100%; border-collapse:collapse; }
       table.media-image-table th, table.media-image-table td { border-bottom:1px solid #e5e7eb; padding:8px; vertical-align:top; }
       table.media-image-table th { text-align:left; font-weight:600; }
-      .mit-thumb { max-width:140px; }
+      /* All images constrained to fit within their boxes */
+      .mit-thumb { max-width:140px; max-height:140px; width:auto; height:auto; object-fit:contain; }
+      
+      /* Thumbnail size - crops to fill 140x140 area */
+      .size-thumbnail .mit-thumb { width:140px; height:140px; object-fit:cover; }
+      
+      /* Small and medium sizes - entire image fits within 140x140 maintaining aspect ratio */
+      .size-small .mit-thumb, 
+      .size-medium .mit-thumb { max-width:140px; max-height:140px; width:auto; height:auto; object-fit:contain; }
+      
+      /* Large size - entire image fits within 300x300 maintaining aspect ratio */
+      .size-large .mit-thumb, 
+      .size-full .mit-thumb { 
+        max-width:300px !important; 
+        max-height:300px !important; 
+        width:auto !important; 
+        height:auto !important; 
+        object-fit:contain; 
+      }
       .mit-filename { font-size:var(--wp--preset--font-size--small, 12px); color:#6b7280; margin-top:4px; word-break:break-all; }
       .mit-exif-popup-wrap { position:relative; display:inline-block; }
       .mit-exif-block { display:none; position:absolute; left:100%; top:0; z-index:10; min-width:420px; max-width:none; background:rgba(255,255,255,0.98); border:1px solid #e5e7eb; box-shadow:0 2px 8px #0001; font-family:monospace,monospace; font-size:13px; line-height:1.4; color:#444; padding:10px 14px; border-radius:6px; margin-left:10px; white-space:nowrap; }
@@ -551,9 +569,12 @@ JS;
         }
       }
 
+      // Adjust column width based on image size
+      $col_width = ($size === 'large' || $size === 'full') ? '320px' : '190px';
+      
       $rows_html .= '<tr>';
-      $rows_html .= '<td style="width:190px; vertical-align:top;">'
-        . '<div class="mit-exif-popup-wrap">' . $thumb_html . $exif_block . '</div>'
+      $rows_html .= '<td style="width:' . $col_width . '; vertical-align:top;">'
+        . '<div class="mit-exif-popup-wrap size-' . esc_attr($size) . '">' . $thumb_html . $exif_block . '</div>'
         . '</td>';
       $rows_html .= '<td style="vertical-align:top; position:relative;">'
         . $right_col

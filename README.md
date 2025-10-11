@@ -71,18 +71,44 @@ Open the page (or preview) to use the tool.
 | `include_unattached` | bool | `true` | Show images with no parent post. |
 | `orderby` | string | `date` | Any valid `WP_Query` orderby for attachments. |
 | `order` | `ASC` / `DESC` | `DESC` | Sort direction. |
-| `size` | string | `thumbnail` | Any registered image size. |
+| `size` | string | `thumbnail` | Image display size: `thumbnail` (140×140 cropped), `small` or `medium` (140×140 contained), `large` or `full` (300×300 contained). |
 | `show_editor` | bool | `true` | Display category edit tool. Set to `false` for read-only inventory/printing. |
 | `metadata_display` | `basic` / `json` | `basic` | EXIF display format: `basic` (human-readable) or `json` (raw data dump). |
 
 ### Examples
 
 ```
-[media_image_list per_page="100" orderby="title" order="ASC" size="medium"]
+[media_image_list per_page="100" orderby="title" order="ASC" size="large"]
 [media_image_list include_unattached="false"]
 [media_image_list show_editor="false"]
 [media_image_list metadata_display="json"]
 ```
+
+---
+
+## Image Sizing
+
+The plugin offers three distinct image display modes optimized for different use cases:
+
+### Thumbnail (`size="thumbnail"`)
+- **Dimensions:** 140×140px (cropped square)
+- **Behavior:** Crops images to fill the entire square area
+- **Use case:** Uniform grid appearance, consistent layout
+- **Best for:** Quick browsing, catalog views
+
+### Small (`size="small"` or `size="medium"`)  
+- **Dimensions:** 140×140px (contained)
+- **Behavior:** Shows complete image within bounds, maintains aspect ratio
+- **Use case:** Compact viewing while seeing the entire image
+- **Best for:** Detail verification, composition review
+
+### Large (`size="large"` or `size="full"`)
+- **Dimensions:** 300×300px (contained)
+- **Behavior:** Shows complete image within bounds, maintains aspect ratio  
+- **Use case:** Detailed examination, quality assessment
+- **Best for:** Photo editing decisions, detailed inspection
+
+All sizes maintain proper aspect ratios and prevent image distortion or elongation.
 
 ---
 
@@ -242,6 +268,15 @@ Small CSS hooks you might override in your theme or a Customizer snippet:
 ---
 
 ## Changelog
+
+### 1.6.1
+- **Enhanced image sizing system:** Three distinct size modes with proper constraints
+- `thumbnail` (140×140 cropped) - uniform squares for consistent layout
+- `small`/`medium` (140×140 contained) - complete images in compact space
+- `large`/`full` (300×300 contained) - detailed viewing with larger display
+- Fixed image elongation issues - all images maintain proper aspect ratios
+- Dynamic column width adjustment based on selected image size
+- Improved CSS specificity to override WordPress inline styles
 
 ### 1.6.0
 - **Major UI improvement:** Compact 2-column layout with inline category editor
