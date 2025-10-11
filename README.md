@@ -134,6 +134,17 @@ If you're logged in but still see a warning, ensure your account has the correct
 
 ## Screenshots
 
+*The following screenshots show the plugin in action using this shortcode:*
+
+```
+[media_image_table 
+    per_page="25" 
+    size="thumbnail" 
+    editor_ui="dropdown" 
+    metadata_display="basic"
+]
+```
+
 ### Media list table with EXIF popups
 ![Media table](assets/Screenshot-1.png)
 
