@@ -2,8 +2,8 @@
 
 A lightweight WordPress plugin that lists **all image attachments** in a table—one image per row—with:
 
-- **Thumbnail with EXIF popup** (camera, lens, exposure, GPS, date) extracted from original uploaded files (column 1)
-- **Parent post title** (linked) + the post's categories with inline **category editor** accessible via "Edit Categories" button (column 2)
+- **Thumbnail with EXIF popup** (camera, lens, exposure, GPS, date) extracted from original uploaded files - click to pin/unpin (column 1)
+- **Parent post title with preview** + categories with inline **category editor** accessible via "Edit Categories" button (column 2)
 
 It works with **draft/private** posts and includes capability checks so only authorized users can modify categories.
 
@@ -17,8 +17,13 @@ It works with **draft/private** posts and includes capability checks so only aut
 - **EXIF metadata display:**
   - Extracted from **original uploaded files** (not resized thumbnails)
   - Hover or click thumbnails to view camera info, lens, exposure settings, GPS location, and capture date
+  - Click-to-pin/unpin functionality with improved toggle behavior
   - Toggle between human-readable format or raw JSON via shortcode attribute
-  - Popup can be "pinned" by clicking the thumbnail (click elsewhere to close)
+- **Inline post preview:**
+  - Click post titles to open full content in a modal overlay
+  - Scrollable content area for long posts
+  - Respects WordPress permissions and post visibility
+  - Multiple ways to close (×, overlay click, Escape key)
 - Shows **draft**/**private** parent posts too
 - **Inline AJAX-powered category editor** with no page reload:
   - Compact 2-column layout with expandable editor via "Edit Categories" button
@@ -112,6 +117,31 @@ All sizes maintain proper aspect ratios and prevent image distortion or elongati
 
 ---
 
+## Post Preview
+
+Click any post title to open an inline preview modal without leaving the media list:
+
+### 🖼️ **Modal Features**
+- **Full post content** - Complete formatted content with shortcodes processed
+- **Responsive design** - Works on desktop, tablet, and mobile devices
+- **Scrollable content** - Handle long posts with vertical scrolling
+- **Post metadata** - Shows publish date, author, and draft status
+- **Secure access** - Respects WordPress permissions and post visibility
+
+### 🎮 **Interaction**
+- **Click post title** → Opens preview modal
+- **"×" close button** → Dismisses the preview
+- **Click overlay background** → Closes modal
+- **Press Escape key** → Keyboard shortcut to close
+- **No page navigation** → Stay in your current position in the media list
+
+### 📱 **Responsive Behavior**
+- **Desktop:** 800px wide modal with comfortable reading width
+- **Mobile:** Full-width modal with proper touch interactions
+- **Tablet:** Optimized sizing for tablet viewing
+
+---
+
 ## EXIF Metadata
 
 The plugin extracts EXIF data from the **original uploaded image file** (not WordPress-generated thumbnails, which strip metadata). The popup displays:
@@ -126,7 +156,9 @@ The plugin extracts EXIF data from the **original uploaded image file** (not Wor
 ### Interaction
 
 - **Hover** over any thumbnail to see the EXIF popup
-- **Click** a thumbnail to "pin" the popup (stays open until you click elsewhere)
+- **Click** a thumbnail to pin/unpin the popup (toggles between locked and hover modes)
+- **Click elsewhere** to close all pinned popups
+- **Click different image** automatically switches the pin to that image
 - Set `metadata_display="json"` to see raw EXIF array for debugging
 
 ---
@@ -268,6 +300,15 @@ Small CSS hooks you might override in your theme or a Customizer snippet:
 ---
 
 ## Changelog
+
+### 1.6.2
+- **New post preview feature:** Click post titles to view full content in modal overlay
+- Modal includes scrollable content, post metadata, and multiple close options
+- Respects WordPress permissions and handles draft/private posts
+- **Enhanced EXIF popup interaction:** Improved click-to-pin/unpin toggle behavior
+- Fixed EXIF popup locking mechanism - now properly toggles on/off
+- Better event handling to prevent conflicts between features
+- Added keyboard support (Escape key) and improved mobile interaction
 
 ### 1.6.1
 - **Enhanced image sizing system:** Three distinct size modes with proper constraints

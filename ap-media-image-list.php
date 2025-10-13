@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: AP Media Image List
- * Description: Shortcode [media_image_table] — displays all media images (one per row) with filename, parent post (linked), categories, and an optional inline compact category editor (search + tri-state checkboxes). Includes draft/private posts.
- * Version: 1.6.1
+ * Description: Shortcode [media_image_table] – displays all media images (one per row) with filename, parent post (linked), categories, and an optional inline compact category editor (search + tri-state checkboxes). Includes draft/private posts.
+ * Version: 1.6.2
  * Author: AlwaysPhotographing
  * License: MIT
  * Text Domain: ap-media-image-list
@@ -44,6 +44,8 @@ class AP_Media_Image_List {
     add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
     add_action('wp_ajax_ap_mit_save_categories', [$this, 'ajax_save_categories']);
     add_action('wp_ajax_nopriv_ap_mit_save_categories', [$this, 'ajax_save_categories']);
+    add_action('wp_ajax_ap_mit_get_post_content', [$this, 'ajax_get_post_content']);
+    add_action('wp_ajax_nopriv_ap_mit_get_post_content', [$this, 'ajax_get_post_content']);
   }
 
   public function enqueue_assets() {
@@ -96,10 +98,10 @@ class AP_Media_Image_List {
 
       .ap-cat-tree { max-height:200px; overflow:auto; border:1px solid #e5e7eb; background:#fff; border-radius:6px; padding:5px; padding-left:3px; width:100%; scrollbar-gutter: stable; }
       .ap-cat-tree ul { list-style:none; margin:0; }
-      .ap-cat-tree > ul { padding-left:0; }          /* root level: no indent */
-      .ap-cat-tree ul ul { padding-left:12px; }      /* nested levels only */
+      .ap-cat-tree > ul { padding-left:0; }
+      .ap-cat-tree ul ul { padding-left:12px; }
       .ap-cat-tree li { margin:2px 0; }
-      .ap-cat-tree li > label { display:flex; align-items:center; gap:6px; min-width:0; } /* allows ellipsis on label text */
+      .ap-cat-tree li > label { display:flex; align-items:center; gap:6px; min-width:0; }
       .ap-cat-check { width:12px; height:12px; flex:0 0 auto; }
       .ap-cat-label { flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:var(--wp--preset--font-size--small, 12px); }
 
@@ -132,6 +134,106 @@ class AP_Media_Image_List {
         background: #f9fafb; 
       }
       .mit-inline-editor.visible { display: block; }
+      
+      /* Post preview modal styles */
+      .mit-post-preview-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 99999;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+      
+      .mit-post-preview-modal {
+        position: relative;
+        max-width: 800px;
+        width: 100%;
+        height: 100%;
+        margin: 0 auto;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        display: flex;
+        flex-direction: column;
+      }
+      
+      .mit-post-preview-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-shrink: 0;
+      }
+      
+      .mit-post-preview-title {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: #1f2937;
+        flex: 1;
+        margin-right: 16px;
+      }
+      
+      .mit-post-preview-close {
+        width: 32px;
+        height: 32px;
+        border: none;
+        background: #f3f4f6;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        line-height: 1;
+        color: #6b7280;
+        flex-shrink: 0;
+      }
+      
+      .mit-post-preview-close:hover {
+        background: #e5e7eb;
+        color: #374151;
+      }
+      
+      .mit-post-preview-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px;
+        line-height: 1.6;
+      }
+      
+      .mit-post-preview-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 200px;
+        color: #6b7280;
+        font-style: italic;
+      }
+      
+      .mit-post-preview-error {
+        color: #dc2626;
+        text-align: center;
+        padding: 40px 20px;
+      }
+      
+      /* Make post titles look clickable */
+      .mit-post-title a {
+        cursor: pointer;
+        text-decoration: none;
+        color: #2563eb;
+      }
+      
+      .mit-post-title a:hover {
+        color: #1d4ed8;
+        text-decoration: underline;
+      }
     ";
     wp_register_style('ap-media-image-list-inline', false);
     wp_enqueue_style('ap-media-image-list-inline');
@@ -139,31 +241,46 @@ class AP_Media_Image_List {
 
     // JS (category panel + EXIF popup pinning + AJAX save)
     $ajax_url = admin_url('admin-ajax.php');
+    $nonce = wp_create_nonce('ap_mit_get_post_content');
   $js = <<<JS
       (function(){
-        // EXIF popup pinning logic
         document.addEventListener('DOMContentLoaded', function(){
-          document.querySelectorAll('.mit-exif-popup-wrap').forEach(function(wrap){
-            var img = wrap.querySelector('.mit-thumb');
-            if (!img) return;
-            img.addEventListener('click', function(e){
-              e.preventDefault();
-              e.stopPropagation();
-              var pinned = wrap.classList.toggle('mit-exif-pinned');
-              if (pinned) {
-                // Unpin all others
-                document.querySelectorAll('.mit-exif-popup-wrap.mit-exif-pinned').forEach(function(other){
-                  if (other !== wrap) other.classList.remove('mit-exif-pinned');
-                });
-              }
-            });
-          });
-          // Clicking anywhere else closes all pinned popups
+          // EXIF popup pinning logic with event delegation
           document.addEventListener('click', function(e){
-            document.querySelectorAll('.mit-exif-popup-wrap.mit-exif-pinned').forEach(function(wrap){
-              if (!wrap.contains(e.target)) wrap.classList.remove('mit-exif-pinned');
-            });
+            var thumb = e.target.closest('.mit-thumb');
+            if (thumb) {
+              var wrap = thumb.closest('.mit-exif-popup-wrap');
+              if (wrap) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                var isPinned = wrap.classList.contains('mit-exif-pinned');
+                
+                // Unpin all others first
+                document.querySelectorAll('.mit-exif-popup-wrap.mit-exif-pinned').forEach(function(other){
+                  if (other !== wrap) {
+                    other.classList.remove('mit-exif-pinned');
+                  }
+                });
+                
+                // Toggle this one
+                if (isPinned) {
+                  wrap.classList.remove('mit-exif-pinned');
+                } else {
+                  wrap.classList.add('mit-exif-pinned');
+                }
+                return;
+              }
+            }
+            
+            // Clicking anywhere else closes all pinned popups
+            if (!e.target.closest('.mit-exif-popup-wrap')) {
+              document.querySelectorAll('.mit-exif-popup-wrap.mit-exif-pinned').forEach(function(wrap){
+                wrap.classList.remove('mit-exif-pinned');
+              });
+            }
           });
+          
           // AJAX save for category editor
           document.querySelectorAll('.ap-cat-panel form').forEach(function(form){
             form.addEventListener('submit', function(ev){
@@ -180,7 +297,6 @@ class AP_Media_Image_List {
                 .then(function(data){
                   note.textContent = data.success ? "Saved!" : (data.data && data.data.message ? data.data.message : "Error");
                   if (data.success) {
-                    // Update the categories display in the second column
                     updateCategoriesDisplay(form);
                     setTimeout(function(){ note.textContent = ''; }, 2000);
                   }
@@ -189,11 +305,102 @@ class AP_Media_Image_List {
                 .finally(function(){ btn.disabled = false; });
             });
           });
+          
+          // Post preview functionality
+          var modalHtml = '<div class="mit-post-preview-overlay" id="mit-post-preview-overlay">' +
+            '<div class="mit-post-preview-modal">' +
+              '<div class="mit-post-preview-header">' +
+                '<h3 class="mit-post-preview-title" id="mit-post-preview-title">Loading...</h3>' +
+                '<button class="mit-post-preview-close" id="mit-post-preview-close">×</button>' +
+              '</div>' +
+              '<div class="mit-post-preview-content" id="mit-post-preview-content">' +
+                '<div class="mit-post-preview-loading">Loading post content...</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+          
+          document.body.insertAdjacentHTML('beforeend', modalHtml);
+          
+          var overlay = document.getElementById('mit-post-preview-overlay');
+          var titleEl = document.getElementById('mit-post-preview-title');
+          var contentEl = document.getElementById('mit-post-preview-content');
+          var closeBtn = document.getElementById('mit-post-preview-close');
+          
+          function closeModal() {
+            overlay.style.display = 'none';
+            document.body.style.overflow = '';
+          }
+          
+          closeBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            closeModal();
+          });
+          
+          overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) {
+              closeModal();
+            }
+          });
+          
+          document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && overlay.style.display === 'block') {
+              closeModal();
+            }
+          });
+          
+          // Handle post title clicks with event delegation and capture phase
+          document.addEventListener('click', function(e) {
+            var link = e.target.closest('.mit-post-preview-link');
+            if (link) {
+              e.preventDefault();
+              e.stopPropagation();
+              e.stopImmediatePropagation();
+              
+              var postId = link.getAttribute('data-post-id');
+              var postTitle = link.textContent.trim();
+              
+              if (!postId) {
+                return false;
+              }
+              
+              // Show modal immediately to prevent page scroll
+              titleEl.textContent = postTitle;
+              contentEl.innerHTML = '<div class="mit-post-preview-loading">Loading post content...</div>';
+              overlay.style.display = 'block';
+              document.body.style.overflow = 'hidden';
+              
+              // Load post content via AJAX
+              var fd = new FormData();
+              fd.append('action', 'ap_mit_get_post_content');
+              fd.append('post_id', postId);
+              fd.append('nonce', '{$nonce}');
+              
+              fetch("{$ajax_url}", {
+                method: 'POST',
+                body: fd,
+                credentials: 'same-origin'
+              })
+              .then(function(response) {
+                return response.json();
+              })
+              .then(function(data) {
+                if (data.success) {
+                  contentEl.innerHTML = data.data.content;
+                } else {
+                  contentEl.innerHTML = '<div class="mit-post-preview-error">Error loading post: ' + 
+                    (data.data && data.data.message ? data.data.message : 'Unknown error') + '</div>';
+                }
+              })
+              .catch(function(error) {
+                contentEl.innerHTML = '<div class="mit-post-preview-error">Error loading post content.</div>';
+              });
+              
+              return false;
+            }
+          }, true);
         });
         
-        // Function to update categories display in the second column
         function updateCategoriesDisplay(form) {
-          // Get all checked categories from the form
           var checkedBoxes = form.querySelectorAll('input[name="ap_mit_cat_id[]"]:checked');
           var categoryNames = [];
           checkedBoxes.forEach(function(box) {
@@ -201,8 +408,6 @@ class AP_Media_Image_List {
             if (name) categoryNames.push(name);
           });
           
-          // Find the corresponding categories display in the second column
-          // The form is in the third column, we need to find the second column in the same row
           var currentRow = form.closest('tr');
           if (currentRow) {
             var categoriesDiv = currentRow.querySelector('td:nth-child(2) .mit-cats');
@@ -216,7 +421,6 @@ class AP_Media_Image_List {
           }
         }
         
-        // Category panel logic (unchanged)
         function applyFilter(panel, query){
           query = (query || '').toLowerCase();
           var wrap = panel.querySelector('.ap-cat-search-wrap');
@@ -243,7 +447,6 @@ class AP_Media_Image_List {
             childCb.indeterminate = false;
           });
         }
-        // Do NOT auto-check parent when children change; only show indeterminate.
         function updateParents(li){
           var parentLi = li.parentElement.closest('.ap-cat-li');
           if(!parentLi) return;
@@ -291,7 +494,6 @@ class AP_Media_Image_List {
         document.addEventListener('DOMContentLoaded', function(){
           document.querySelectorAll('.ap-cat-panel').forEach(attach);
           
-          // Handle Edit Categories button clicks
           document.querySelectorAll('.mit-edit-categories-btn').forEach(function(btn) {
             btn.addEventListener('click', function(e) {
               e.preventDefault();
@@ -299,7 +501,6 @@ class AP_Media_Image_List {
               if (editor && editor.classList.contains('mit-inline-editor')) {
                 var isVisible = editor.classList.contains('visible');
                 
-                // Hide all other editors first
                 document.querySelectorAll('.mit-inline-editor.visible').forEach(function(otherEditor) {
                   if (otherEditor !== editor) {
                     otherEditor.classList.remove('visible');
@@ -308,7 +509,6 @@ class AP_Media_Image_List {
                   }
                 });
                 
-                // Toggle current editor
                 if (isVisible) {
                   editor.classList.remove('visible');
                   btn.textContent = 'Edit Categories';
@@ -329,11 +529,8 @@ JS;
 
   // AJAX handler for category save
   public function ajax_save_categories() {
-  // Debug: log when handler is called
   error_log('AP_Media_Image_List: ajax_save_categories called');
-  // Set content type header for JSON
   header('Content-Type: application/json; charset=utf-8');
-    // Check nonce and permissions
     if (empty($_POST['ap_mit_update_cats']) || empty($_POST['ap_mit_post_id']) || empty($_POST['ap_mit_nonce'])) {
       wp_send_json_error(['message' => 'Missing data.']);
     }
@@ -353,6 +550,56 @@ JS;
     wp_send_json_success(['message' => 'Saved.']);
   }
 
+  // AJAX handler for post content preview
+  public function ajax_get_post_content() {
+    header('Content-Type: application/json; charset=utf-8');
+    
+    if (empty($_POST['post_id']) || empty($_POST['nonce'])) {
+      wp_send_json_error(['message' => 'Missing data.']);
+    }
+    
+    $post_id = intval($_POST['post_id']);
+    if ($post_id <= 0) {
+      wp_send_json_error(['message' => 'Invalid post ID.']);
+    }
+    
+    if (!wp_verify_nonce($_POST['nonce'], 'ap_mit_get_post_content')) {
+      wp_send_json_error(['message' => 'Invalid nonce.']);
+    }
+    
+    $post = get_post($post_id);
+    if (!$post) {
+      wp_send_json_error(['message' => 'Post not found.']);
+    }
+    
+    if (!current_user_can('read_post', $post_id)) {
+      wp_send_json_error(['message' => 'Permission denied.']);
+    }
+    
+    $content = $post->post_content;
+    $content = apply_filters('the_content', $content);
+    
+    $post_meta = '';
+    $post_date = get_the_date('F j, Y', $post_id);
+    $post_status = get_post_status($post_id);
+    $author = get_the_author_meta('display_name', $post->post_author);
+    
+    if ($post_status !== 'publish') {
+      $post_meta .= '<p style="background:#fff3cd;padding:10px;border-radius:4px;margin-bottom:16px;"><strong>Status:</strong> ' . esc_html(ucfirst($post_status)) . '</p>';
+    }
+    
+    $post_meta .= '<div style="padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:14px;">';
+    $post_meta .= '<strong>Published:</strong> ' . esc_html($post_date);
+    if ($author) {
+      $post_meta .= ' | <strong>Author:</strong> ' . esc_html($author);
+    }
+    $post_meta .= '</div>';
+    
+    $full_content = $post_meta . $content;
+    
+    wp_send_json_success(['content' => $full_content]);
+  }
+
   public function render_shortcode($atts) {
     $atts = shortcode_atts([
       'per_page'           => 50,
@@ -362,7 +609,7 @@ JS;
       'order'              => 'DESC',
       'size'               => 'thumbnail',
       'show_editor'        => 'true',
-      'metadata_display'   => 'basic', // basic|json
+      'metadata_display'   => 'basic',
     ], $atts, 'media_image_table');
 
     $per_page = intval($atts['per_page']); if ($per_page === 0) $per_page = 50;
@@ -392,24 +639,21 @@ JS;
     $rows_html = '';
     foreach ($attachments_q->posts as $attachment_id) {
       try {
-  $parent_id = (int) get_post_field('post_parent', $attachment_id);
+        $parent_id = (int) get_post_field('post_parent', $attachment_id);
       } catch (\Throwable $e) {
         $rows_html .= '<tr><td colspan="3" style="color:red;font-size:13px;">EXIF ERROR: ' . esc_html($e->getMessage()) . '</td></tr>';
         continue;
       }
-      // ...no debug output...
-  // Reset right_col for each row
-  $right_col = '';
+      
+      $right_col = '';
       $thumb_html = wp_get_attachment_image($attachment_id, $size, false, ['class' => 'mit-thumb']);
       if (!$thumb_html) continue;
 
-      // Get original file path (not a resized version)
       $upload_dir = wp_get_upload_dir();
       $relative_path = get_post_meta($attachment_id, '_wp_attached_file', true);
       $original_file_path = $relative_path ? trailingslashit($upload_dir['basedir']) . $relative_path : '';
       $filename  = $original_file_path ? wp_basename($original_file_path) : wp_basename(get_post_field('guid', $attachment_id));
 
-      // EXIF extraction from original file
       $exif = [];
       if ($original_file_path && file_exists($original_file_path)) {
         if (function_exists('wp_read_image_metadata')) {
@@ -422,23 +666,20 @@ JS;
         }
       }
 
-      // Format EXIF info (reset for each row)
       $exif_lines = array();
-      // Camera
       $make  = $exif['IFD0']['Make'] ?? $exif['EXIF']['Make'] ?? $exif['Make'] ?? '';
       $model = $exif['IFD0']['Model'] ?? $exif['EXIF']['Model'] ?? $exif['Model'] ?? '';
       if ($make || $model) {
         $exif_lines[] = 'Camera: ' . esc_html(trim($make . ' ' . $model));
       }
-      // Lens
+      
       $lens_make  = $exif['EXIF']['LensMake'] ?? $exif['IFD0']['LensMake'] ?? $exif['LensMake'] ?? '';
       $lens_model = $exif['EXIF']['LensModel'] ?? $exif['IFD0']['LensModel'] ?? $exif['UndefinedTag:0xA434'] ?? $exif['LensModel'] ?? '';
       if ($lens_make || $lens_model) {
         $exif_lines[] = 'Lens: ' . esc_html(trim($lens_make . ' ' . $lens_model));
       }
-      // Exposure
+      
       $focal = $exif['EXIF']['FocalLength'] ?? $exif['EXIF']['FocalLengthIn35mmFilm'] ?? $exif['FocalLength'] ?? '';
-      // If focal is in fraction format (e.g., 3000/10), calculate value
       if (is_string($focal) && strpos($focal, '/') !== false) {
         list($num, $den) = explode('/', $focal, 2);
         if (is_numeric($num) && is_numeric($den) && $den != 0) {
@@ -454,12 +695,12 @@ JS;
       if ($exposure_time) $exposure[] = (is_array($exposure_time) ? reset($exposure_time) : $exposure_time) . 's';
       if ($iso) $exposure[] = 'ISO ' . (is_array($iso) ? reset($iso) : $iso);
       if ($exposure) $exif_lines[] = 'Exposure: ' . esc_html(implode(' ', $exposure));
-      // Date
+      
       $date = $exif['EXIF']['DateTimeOriginal'] ?? $exif['IFD0']['DateTime'] ?? $exif['DateTimeOriginal'] ?? '';
       if ($date) {
         $exif_lines[] = 'Date: ' . esc_html($date);
       }
-      // Location (GPS) (not present in your sample, but keep logic)
+      
       $gps_lat = '';
       $gps_lon = '';
       $gps_dir = '';
@@ -476,18 +717,17 @@ JS;
       if ($gps_parts) {
         $exif_lines[] = 'Location: ' . esc_html(implode(' ', $gps_parts));
       }
-      // File (always add once, at the end, and never duplicate)
+      
       $exif_lines = array_values(array_filter($exif_lines, function($line) use ($filename) {
         return trim($line) !== ('File: ' . $filename);
       }));
       $exif_lines[] = 'File: ' . esc_html($filename);
+      
       if ($atts['metadata_display'] === 'json') {
         $exif_block = '<div class="mit-exif-block" style="white-space:pre-wrap;word-break:break-all;">' . esc_html(json_encode($exif)) . '</div>';
       } else {
         $exif_block = '<div class="mit-exif-block">' . implode('<br>', $exif_lines) . '</div>';
       }
-
-      $edit_col  = '';
 
       if ($parent_id > 0) {
         $parent = get_post($parent_id);
@@ -496,13 +736,12 @@ JS;
           $status     = get_post_status($parent_id);
           $permalink  = ($status === 'publish') ? get_permalink($parent_id) : get_preview_post_link($parent);
           $post_title_esc = esc_html($post_title ?: '(untitled)');
-          $post_link_esc  = esc_url($permalink ?: '#');
 
           $cat_terms = taxonomy_exists('category') ? wp_get_post_terms($parent_id, 'category') : [];
           $tax_cats  = (!empty($cat_terms) && !is_wp_error($cat_terms)) ? wp_list_pluck($cat_terms, 'name') : [];
           $cats_text = !empty($tax_cats) ? esc_html(implode(', ', $tax_cats)) : '';
 
-          $right_col .= '<div class="mit-post-title"><a href="' . $post_link_esc . '">' . $post_title_esc . '</a>';
+          $right_col .= '<div class="mit-post-title"><a href="#" class="mit-post-preview-link" data-post-id="' . esc_attr($parent_id) . '">' . $post_title_esc . '</a>';
           if ($status && $status !== 'publish') $right_col .= ' <span class="mit-unattached">(' . esc_html($status) . ')</span>';
           $right_col .= '</div>';
           $right_col .= '<div class="mit-cats">' . ($cats_text !== '' ? $cats_text : '<span class="mit-unattached">No categories</span>') . '</div>';
@@ -569,7 +808,6 @@ JS;
         }
       }
 
-      // Adjust column width based on image size
       $col_width = ($size === 'large' || $size === 'full') ? '320px' : '190px';
       
       $rows_html .= '<tr>';
